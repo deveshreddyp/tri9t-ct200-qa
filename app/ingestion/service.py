@@ -136,16 +136,19 @@ def ingest_pdf(
     db: Session,
     pdf_path: str,
     document_name: Optional[str] = None,
+    original_filename: Optional[str] = None,
 ) -> IngestResult:
     """
     Parse *pdf_path* and persist it as a new Document version.
 
     Parameters
     ----------
-    db            SQLAlchemy session (caller owns transaction boundaries).
-    pdf_path      Absolute or relative path to the PDF file.
-    document_name Name under which to register/find the Document.
-                  Defaults to the PDF filename stem (without extension).
+    db                SQLAlchemy session (caller owns transaction boundaries).
+    pdf_path          Absolute or relative path to the PDF file on disk.
+    document_name     Name under which to register/find the Document.
+                      Defaults to the PDF filename stem (without extension).
+    original_filename The original filename (if uploaded). Falls back to
+                      os.path.basename(pdf_path) if not provided.
 
     Returns
     -------
@@ -159,7 +162,11 @@ def ingest_pdf(
     if not os.path.exists(pdf_path):
         raise FileNotFoundError(f"PDF not found: {pdf_path}")
 
-    source_filename = os.path.basename(pdf_path)
+    if original_filename:
+        source_filename = original_filename
+    else:
+        source_filename = os.path.basename(pdf_path)
+
     if document_name is None:
         document_name = os.path.splitext(source_filename)[0]
 
@@ -183,7 +190,7 @@ def ingest_pdf(
 
     # 4. Pass 1 — insert nodes with parent_id=NULL
     orm_nodes = _parsed_nodes_to_orm(parsed_nodes, version.id)
-    db.bulk_save_objects(orm_nodes, return_defaults=True)
+    db.add_all(orm_nodes)
     db.flush()  # populate orm_node.id for all rows
 
     # 5. Pass 2 — resolve parent_id using uuid → pk map
