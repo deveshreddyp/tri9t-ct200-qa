@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, RootModel
 
 
 # ===========================================================================
@@ -137,10 +137,20 @@ class SelectionResponse(BaseModel):
 # ===========================================================================
 
 class TestCaseIdea(BaseModel):
-    id: Optional[str] = None
     title: str
-    steps: List[str]
-    expected_result: str
+    steps: List[str] = Field(min_length=1)
+    expected_result: str = Field(min_length=1)
+
+    model_config = ConfigDict(from_attributes=True)
+
+class TestCaseList(RootModel):
+    root: List[TestCaseIdea] = Field(min_length=3, max_length=5)
+
+    @field_validator("root")
+    def check_length(cls, v):
+        if not (3 <= len(v) <= 5):
+            raise ValueError("Must provide between 3 and 5 test cases")
+        return v
 
 
 class StalenessInfo(BaseModel):
