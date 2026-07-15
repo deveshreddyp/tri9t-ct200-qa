@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List
 import json
 from app.db import get_db
-from app.models.orm import Selection, Generation, Node
+from app.models.orm import Selection, Node
 from app.models.schemas import GenerationResponse, StalenessInfo
 from app.generation.service import generate_and_store_test_cases
 
@@ -22,19 +22,14 @@ async def generate_test_cases(selection_id: int, db: Session = Depends(get_db)):
     if not nodes:
         raise HTTPException(status_code=400, detail="Selection has no nodes")
         
-    gen = await generate_and_store_test_cases(db, nodes, selection_id=selection.id)
+    gen_record = await generate_and_store_test_cases(nodes, selection_id=selection.id)
     
-    # Construct response
-    test_cases = []
-    if gen.test_cases_json:
-        test_cases = json.loads(gen.test_cases_json)
-        
     return GenerationResponse(
-        generation_id=gen.id,
-        selection_id=gen.selection_id,
-        created_at=gen.created_at.isoformat() if gen.created_at else None,
-        test_cases=test_cases,
-        validation_status=gen.validation_status,
+        generation_id=gen_record["generation_id"],
+        selection_id=gen_record["selection_id"],
+        created_at=gen_record["created_at"],
+        test_cases=gen_record["test_cases"],
+        validation_status=gen_record["validation_status"],
         staleness=StalenessInfo(stale=False) # Newly generated cannot be stale
     )
 
