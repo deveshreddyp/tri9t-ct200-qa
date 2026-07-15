@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+import sys, io
+if sys.stdout.encoding and sys.stdout.encoding.lower() != 'utf-8':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 """
 scripts/dump_tree.py — Ingest a PDF manual and print the parsed tree indented,
 so you can visually verify it against the real document.
@@ -47,15 +51,15 @@ def print_tree(nodes: List[ParsedNode], label: str) -> None:
     for node in nodes:
         ind = _indent(node.level)
         level_tag = f"LEVEL{node.level}" if node.level > 0 else "PREAMBLE"
-        title_display = node.title[:MAX_TITLE].replace("\n", " ↵ ")
+        title_display = node.title[:MAX_TITLE].replace("\n", " <NL> ")
         if len(node.title) > MAX_TITLE:
-            title_display += "…"
+            title_display += "..."
 
         print(f"{ind}[{level_tag}] [{node.order_index}] {title_display}")
         print(f"{ind}  hash:{node.content_hash[:12]}  parent:{str(node.parent_id)[:8] if node.parent_id else 'ROOT'}")
 
         if node.body.strip():
-            body_preview = node.body.strip()[:MAX_BODY].replace("\n", " ↵ ")
+            body_preview = node.body.strip()[:MAX_BODY].replace("\n", " <NL> ")
             if len(node.body.strip()) > MAX_BODY:
                 body_preview += "…"
             # Wrap body preview for readability
