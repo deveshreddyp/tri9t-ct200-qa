@@ -6,6 +6,8 @@ from app.db import get_db
 from app.models.orm import Selection, Node
 from app.models.schemas import GenerationResponse, StalenessInfo
 from app.generation.service import generate_and_store_test_cases
+from app.generation import store
+from app.staleness.service import check_staleness
 
 router = APIRouter(tags=["generations"])
 
@@ -38,21 +40,35 @@ def get_generations_by_selection(selection_id: int, db: Session = Depends(get_db
     """
     Retrieve all test case generations associated with a specific selection ID.
     """
-    # Stub implementation
-    return []
+    gens = store.get_generations_by_selection(selection_id)
+    return [_format_generation_response(db, g) for g in gens]
 
 @router.get("/generations/by-node/{logical_node_id}", response_model=List[GenerationResponse])
 def get_generations_by_node(logical_node_id: str, db: Session = Depends(get_db)):
     """
     Retrieve all test case generations associated with a specific logical node.
     """
-    # Stub implementation
-    return []
+    gens = store.get_generations_by_node(logical_node_id)
+    return [_format_generation_response(db, g) for g in gens]
 
 @router.get("/generations/{generation_id}", response_model=GenerationResponse)
 def get_generation(generation_id: str, db: Session = Depends(get_db)):
     """
     Fetch a single generation record by its ID, complete with current staleness status.
     """
-    # Stub implementation
-    pass
+    try:
+        gen = store.get_generation(generation_id)
+        return _format_generation_response(db, gen)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Generation not found")
+
+def _format_generation_response(db: Session, gen_record: dict) -> GenerationResponse:
+    staleness = check_staleness(db, gen_record)
+    return GenerationResponse(
+        generation_id=gen_record["generation_id"],
+        selection_id=gen_record.get("selection_id"),
+        created_at=gen_record.get("created_at"),
+        test_cases=gen_record.get("test_cases", []),
+        validation_status=gen_record.get("validation_status", "ok"),
+        staleness=staleness
+    )

@@ -48,3 +48,15 @@ def get_generations_by_selection(selection_id: int) -> List[Dict[str, Any]]:
     """
     all_gens = list_generations()
     return [g for g in all_gens if g.get("selection_id") == selection_id]
+
+def get_generations_by_node(logical_node_id: str) -> List[Dict[str, Any]]:
+    """
+    Returns all generation records that include the specified logical_node_id in their source_snapshot.
+    """
+    all_gens = list_generations()
+    results = []
+    for g in all_gens:
+        snapshot = g.get("source_snapshot", [])
+        if any(snap.get("logical_node_id") == logical_node_id for snap in snapshot):
+            results.append(g)
+    return results
