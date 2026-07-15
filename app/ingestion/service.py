@@ -38,6 +38,7 @@ from sqlalchemy.orm import Session
 
 from app.models.orm import Document, DocumentVersion, Node
 from app.parser.pdf_tree import ParsedNode, parse_pdf_to_tree
+from app.versioning.matcher import match_version_nodes
 
 
 # ---------------------------------------------------------------------------
@@ -187,6 +188,12 @@ def ingest_pdf(
     )
     db.add(version)
     db.flush()  # populate version.id
+
+    # 3. Apply version matching if there's a previous version
+    prev_version = db.query(DocumentVersion).filter_by(document_id=doc.id, version_number=ver_num - 1).first()
+    if prev_version:
+        v1_nodes = db.query(Node).filter_by(document_version_id=prev_version.id).all()
+        match_version_nodes(v1_nodes, parsed_nodes)
 
     # 4. Pass 1 — insert nodes with parent_id=NULL
     orm_nodes = _parsed_nodes_to_orm(parsed_nodes, version.id)
