@@ -263,50 +263,56 @@ class TestNodeEndpoints:
 @skip_no_pdf
 class TestNodeChangesEndpoint:
 
-    def test_at_least_one_section_changed(self, client, ingest_v1, ingest_v2):
-        """
-        Without a version-matcher pass, v1 and v2 nodes have DIFFERENT
-        logical_node_ids (each version gets fresh UUIDs at ingest time).
-        The /changes endpoint requires matching logical_node_ids across
-        versions — that's the version matcher's job (next phase).
-
-        For now, we verify the endpoint responds correctly when given a
-        logical_node_id that exists only in v1 (status=removed) or v2
-        (status=added), confirming the diff machinery works end-to-end.
-        """
+    def test_battery_life_spec_changed(self, client, ingest_v1, ingest_v2):
         doc_id = ingest_v1["document_id"]
-        # Take first section from v1 — it won't exist in v2 under that UUID
-        sections_v1 = client.get(f"/documents/{doc_id}/sections?version=1").json()
-        assert sections_v1, "v1 should have sections"
-        logical_id = sections_v1[0]["logical_node_id"]
+        # Find the logical_node_id for the battery life spec
+        search = client.get(f"/nodes/search?q=Battery Life&doc_id={doc_id}").json()
+        assert search, "Expected to find Battery Life section"
+        logical_id = search[0]["logical_node_id"]
 
-        resp = client.get(
-            f"/nodes/{logical_id}/changes?from=1&to=2&doc_id={doc_id}"
-        )
+        resp = client.get(f"/nodes/{logical_id}/changes?from=1&to=2&doc_id={doc_id}")
         assert resp.status_code == 200
         data = resp.json()
-        # Since UUIDs differ across versions, this node is "removed" from v1 perspective
-        assert data["status"] in ("removed", "changed", "unchanged"), (
-            f"Unexpected status: {data['status']}"
-        )
-        assert data["logical_node_id"] == logical_id
-        assert data["from_version"] == 1
-        assert data["to_version"] == 2
-
-    def test_unchanged_section_shape(self, client, ingest_v1, ingest_v2):
+        
+        assert data["status"] == "changed"
+        assert data["body_changed"] is True
+        assert data["title_changed"] is False
+        assert data["unified_diff"] is not None
+        assert "300 measurement cycles" in data["unified_diff"] or "250 measurement cycles" in data["unified_diff"]
+        
+    def test_e3_deflation_time_changed(self, client, ingest_v1, ingest_v2):
         doc_id = ingest_v1["document_id"]
-        sections = client.get(f"/documents/{doc_id}/sections?version=1").json()
-        for s in sections:
-            resp = client.get(
-                f"/nodes/{s['logical_node_id']}/changes"
-                f"?from=1&to=2&doc_id={doc_id}"
-            )
-            if resp.status_code == 200 and resp.json()["status"] == "unchanged":
-                data = resp.json()
-                assert data["title_changed"] is False
-                assert data["body_changed"] is False
-                return
-        pytest.skip("No unchanged sections found between v1 and v2")
+        # Find the logical_node_id for Error Codes (where E3 is)
+        search = client.get(f"/nodes/search?q=Error Codes&doc_id={doc_id}").json()
+        assert search, "Expected to find Error Codes section"
+        # Since 'Error Codes' appears in 4.2 and 7.1, let's grab 4.2 Error Codes
+        error_codes_node = next(n for n in search if "4.2" in n["title"])
+        logical_id = error_codes_node["logical_node_id"]
+
+        resp = client.get(f"/nodes/{logical_id}/changes?from=1&to=2&doc_id={doc_id}")
+        assert resp.status_code == 200
+        data = resp.json()
+        
+        assert data["status"] == "changed"
+        assert data["body_changed"] is True
+        assert data["unified_diff"] is not None
+        assert "E3" in data["unified_diff"]
+
+    def test_unchanged_node_status(self, client, ingest_v1, ingest_v2):
+        doc_id = ingest_v1["document_id"]
+        # 1.1 Intended Use did not change between v1 and v2
+        search = client.get(f"/nodes/search?q=1.1 Intended Use&doc_id={doc_id}").json()
+        assert search, "Expected to find 1.1 Intended Use section"
+        logical_id = search[0]["logical_node_id"]
+
+        resp = client.get(f"/nodes/{logical_id}/changes?from=1&to=2&doc_id={doc_id}")
+        assert resp.status_code == 200
+        data = resp.json()
+
+        assert data["status"] == "unchanged"
+        assert data["title_changed"] is False
+        assert data["body_changed"] is False
+        assert data["unified_diff"] is None
 
     def test_changes_missing_doc_id_is_422(self, client, ingest_v1):
         doc_id = ingest_v1["document_id"]
