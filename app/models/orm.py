@@ -187,3 +187,68 @@ class SelectionItem(Base):
             f"<SelectionItem id={self.id}"
             f" selection={self.selection_id} node={self.node_id}>"
         )
+
+
+# ---------------------------------------------------------------------------
+# Generation
+# ---------------------------------------------------------------------------
+class Generation(Base):
+    __tablename__ = "generations"
+
+    id = Column(String(36), primary_key=True)
+    selection_id = Column(
+        Integer,
+        ForeignKey("selections.id", ondelete="CASCADE"),
+        nullable=True, # Optional, if they generated from raw nodes instead
+        index=True,
+    )
+    created_at = Column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    
+    # Store raw output for debugging and fallback
+    raw_response = Column(Text, nullable=False)
+    
+    # Store parsed test cases as JSON (if valid)
+    test_cases_json = Column(Text, nullable=True)
+    
+    validation_status = Column(String(20), nullable=False, default="ok") # "ok" | "repaired" | "failed"
+    validation_notes = Column(Text, nullable=True)
+
+    selection = relationship("Selection")
+    snapshot_items = relationship(
+        "GenerationSnapshotItem",
+        back_populates="generation",
+        cascade="all, delete-orphan",
+    )
+
+    def __repr__(self) -> str:
+        return f"<Generation id={self.id} status={self.validation_status}>"
+
+
+# ---------------------------------------------------------------------------
+# GenerationSnapshotItem
+# ---------------------------------------------------------------------------
+class GenerationSnapshotItem(Base):
+    """
+    Records exactly which sections (logical_node_id + content_hash) were used
+    as input for a Generation. Used for Staleness Detection later.
+    """
+    __tablename__ = "generation_snapshot_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    generation_id = Column(
+        String(36),
+        ForeignKey("generations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    logical_node_id = Column(String(36), nullable=False)
+    content_hash = Column(String(64), nullable=False)
+
+    generation = relationship("Generation", back_populates="snapshot_items")
+
+    def __repr__(self) -> str:
+        return (
+            f"<GenerationSnapshotItem id={self.id}"
+            f" generation={self.generation_id} logical_node_id={self.logical_node_id}>"
+        )
+
