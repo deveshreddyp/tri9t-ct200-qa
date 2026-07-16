@@ -48,9 +48,9 @@ Base = declarative_base()
 # ---------------------------------------------------------------------------
 def init_db() -> None:
     """Create all tables defined under Base.  Safe to call multiple times."""
-    # Import orm so all models are registered on Base before create_all
+    import app.db as _self  # late-bind so monkey-patching in tests works
     import app.models.orm  # noqa: F401
-    Base.metadata.create_all(bind=engine)
+    Base.metadata.create_all(bind=_self.engine)
 
 
 # ---------------------------------------------------------------------------

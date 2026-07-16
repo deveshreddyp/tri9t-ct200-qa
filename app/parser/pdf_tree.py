@@ -12,18 +12,27 @@ and typographic cues. This module uses a layered classification approach:
    number of dot-separated components in the prefix.
 
    IMPORTANT guard against numbered lists (irregularity #1):
-   Before accepting a numbered prefix as a heading we apply TWO extra
-   checks:
-   a) The prefix number must be >= 1 and the FIRST component must not
-      be a single digit followed by a period that looks like a list item
-      at the *same depth as the current section body* — specifically, if
-      the candidate level would EQUAL the current open node's level (or
-      higher = shallower), but the prefix is a short "N." or "N. text"
-      where N is 1..9 and the text after the dot strongly resembles
-      descriptive prose (contains lowercase words or starts with an
-      adjective like "Normal", "Elevated", "Hypertension"), we reject it
-      as a heading and treat it as body text.
-   b) A block is also rejected as a heading if it contains 3 or more
+   A numbered block is accepted as a heading only when ALL of the following
+   hold:
+   a) It is not a known list-item: the text after the number+period does
+      not start with a known list keyword ("Normal", "Elevated", etc.),
+      and the block does not contain multiple sub-items each starting with
+      a digit+period, and the suffix does not match the "N. Label: prose"
+      list pattern.
+   b) **Font-priority rule** (the critical gate): if the block's numbering
+      depth is 1 (i.e. a bare "N. Title" pattern with a single-digit
+      section number), then the block MUST also be typographically
+      distinguished from surrounding body text — its font size must be
+      above the body-median (present in font_buckets) OR it must be bold.
+      A level-1 numbered block that is neither larger than body text nor
+      bold is treated as body text regardless of its numbering, because a
+      numbering coincidence (a list item whose counter happens to equal the
+      next section number) is more likely than an unstylised top-level
+      heading.
+      Sub-section numbered blocks (depth >= 2, e.g. "4.1", "3.2.1") are
+      always accepted when rule (a) passes, because multi-component
+      numbers are unambiguous structural markers even at body font size.
+   c) A block is also rejected as a heading if it contains 2 or more
       newline-separated sub-items that each start with a digit+period
       (the block is the whole numbered list already merged by PyMuPDF).
 
@@ -136,7 +145,8 @@ def _parse_numbering_level(text: str) -> Optional[int]:
 def _looks_like_list_item(text: str) -> bool:
     """
     Return True if this numbered block is almost certainly a numbered LIST
-    item rather than a section heading.
+    item rather than a section heading, based on text-content heuristics
+    alone (without considering font metadata).
 
     Guards against irregularity #1: classification lists like
       "1. Normal: systolic < 120 ..."
@@ -150,6 +160,12 @@ def _looks_like_list_item(text: str) -> bool:
     c) The number prefix component count == 1 AND the first component is a
        single digit AND the rest of the text contains a colon (list items
        typically follow "N. Label: description" pattern).
+
+    NOTE: This function is intentionally conservative — it only catches
+    clear list-item signals.  The font-priority gate in
+    `_is_heading_candidate` is the second, stronger line of defence that
+    handles ambiguous cases (like a real heading rendered at body font size
+    that would otherwise pass all text heuristics here).
     """
     stripped = text.strip()
     m = _NUMBERED_HEADING_RE.match(stripped)
@@ -178,7 +194,64 @@ def _looks_like_list_item(text: str) -> bool:
     return False
 
 
-def _is_table_header(block: Dict[str, Any]) -> bool:
+def _is_heading_candidate(
+    text: str,
+    block: "Dict[str, Any]",
+    font_buckets: "Dict[float, int]",
+) -> bool:
+    """
+    Return True if *text* should be treated as a section heading rather than
+    body text, combining the numbering-pattern signal with the font signal.
+
+    This is the authoritative classifier for numbered blocks.  It applies
+    the font-priority rule described in the module docstring (irregularity
+    #1, rule b): for depth-1 numbered blocks, font size or bold status MUST
+    confirm the heading classification; the numbering pattern alone is not
+    sufficient.
+
+    Arguments
+    ---------
+    text        : stripped block text (same string passed to
+                  _parse_numbering_level / _looks_like_list_item).
+    block       : the raw block dict from pdf_extract (carries font_size /
+                  is_bold metadata).
+    font_buckets: mapping of above-median font sizes → heading levels,
+                  produced by _build_font_buckets.
+
+    Returns
+    -------
+    True  → accept as heading
+    False → treat as body text
+    """
+    # Step 1: fast reject — no numbering prefix at all
+    num_level = _parse_numbering_level(text)
+    if num_level is None:
+        return False
+
+    # Step 2: text-content heuristics (conservative list-item detection)
+    if _looks_like_list_item(text):
+        return False
+
+    # Step 3: font-priority gate — only applied to depth-1 ("N. Title")
+    # blocks, where a numbering coincidence with a preceding list is possible.
+    # Depth >= 2 blocks ("N.M …", "N.M.P …") are structurally unambiguous.
+    if num_level == 1:
+        font_size = block.get("font_size", 0.0)
+        is_bold = block.get("is_bold", False)
+        typographically_distinguished = (
+            font_size in font_buckets  # above body-median size
+            or is_bold                 # explicitly bold face
+        )
+        if not typographically_distinguished:
+            # Numbering coincidence: a "N. prose" block at body font size is
+            # far more likely to be a list continuation than an unstylised
+            # top-level heading.  Reject.
+            return False
+
+    return True
+
+
+def _is_table_header(block: "Dict[str, Any]") -> bool:
     """
     Return True if the block looks like a PDF table column header row.
 
@@ -190,6 +263,13 @@ def _is_table_header(block: Dict[str, Any]) -> bool:
     (no verb ending, no period at end, typically very short words).
     """
     text = block.get("text", "").strip()
+    
+    # Fast reject: numbered headings are never table headers.
+    # (Fixes the bug where "4. Alarms and Safety Behavior" was swallowed
+    # because it contained the table-header token "Behavior").
+    if _parse_numbering_level(text) is not None:
+        return False
+        
     words = text.split()
     if len(words) > 6:
         return False
@@ -308,20 +388,29 @@ def _classify_blocks(
         if not text:
             continue
 
+        if b.get("type") == "table":
+            classified.append(("body", 0, text))
+            continue
+
         # --- Guard: table header suppression (irregularity #3) ---
         if _is_table_header(b) and (b["is_bold"] or b["font_size"] in font_buckets):
             # Treat as body even if it would otherwise be classified as heading
             classified.append(("body", 0, text))
             continue
 
-        # --- Signal 1: numbered heading pattern ---
+        # --- Signal 1: numbered heading pattern (font-priority gate included) ---
         num_level = _parse_numbering_level(text)
         if num_level is not None:
-            # Guard: numbered list items (irregularity #1)
-            if _looks_like_list_item(text):
-                classified.append(("body", 0, text))
-            else:
+            # _is_heading_candidate applies both text heuristics (irregularity
+            # #1 list-item guards) and the font-priority rule: a depth-1
+            # numbered block at body-median font size and not bold is rejected
+            # as a heading even if all text heuristics pass, because a
+            # numbering coincidence with a preceding list is more likely than
+            # a real heading that happens to be rendered at body size.
+            if _is_heading_candidate(text, b, font_buckets):
                 classified.append(("heading", num_level, text))
+            else:
+                classified.append(("body", 0, text))
             continue
 
         # --- Signal 2: font-size / bold heuristic ---
